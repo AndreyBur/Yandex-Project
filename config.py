@@ -14,6 +14,8 @@ WELCOME = '''*👋 Добро пожаловать*
 Если вы найдете любые баги или опечатки, напишите пожалуйста нашей поддержке: @hugopay\\_support'''
 
 CANCEL = InlineKeyboardButton('Отмена 🗑', callback_data='cancel')
+CONFIRM = InlineKeyboardButton('Подтвердить ✅', callback_data='confirm')
+CANCEL_2 = InlineKeyboardButton('Отменить ❌', callback_data='cancel')
 
 MAIN_KB = ReplyKeyboardMarkup(resize_keyboard=True)
 MAIN_KB.row(KeyboardButton('Перевод 💸'), KeyboardButton('Профиль 👤'))
@@ -22,9 +24,18 @@ MAIN_KB.row(KeyboardButton('Поддержка ❓'), KeyboardButton('Настр
 
 CANCEL_KB = InlineKeyboardMarkup().add(CANCEL)
 
-PAYMENT_METHODS_KB = InlineKeyboardMarkup()
-PAYMENT_METHODS_KB.row(
+CONFIRM_KB = InlineKeyboardMarkup().row(CONFIRM, CANCEL_2)
+
+DEPOSIT_METHODS_KB = InlineKeyboardMarkup()
+DEPOSIT_METHODS_KB.row(
     InlineKeyboardButton('Qiwi 🥝', callback_data='deposit_qiwi'),
     # InlineKeyboardButton('BNB (BEP20) 🟢', callback_data='deposit_bnbbep20')
 )
-PAYMENT_METHODS_KB.row(CANCEL)
+DEPOSIT_METHODS_KB.row(CANCEL)
+
+WITHDRAW_METHODS_KB = InlineKeyboardMarkup()
+WITHDRAW_METHODS_KB.row(
+    InlineKeyboardButton('Qiwi 🥝', callback_data='withdraw_qiwi'),
+    # InlineKeyboardButton('BNB (BEP20) 🟢', callback_data='deposit_bnbbep20')
+)
+WITHDRAW_METHODS_KB.row(CANCEL)

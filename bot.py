@@ -4,6 +4,7 @@ from payments import qiwi_handler
 from threading import Thread
 import sqlite3
 import logging
+import re
 
 
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +24,9 @@ cur.execute('''CREATE TABLE IF NOT EXISTS Qiwi (
     token TEXT,
     txn_id INTEGER
 )''')
+
+number_re = re.compile(r'[\d|+]\d{6,12}')
+amount_re = re.compile(r'\d+(.\d{1,2}){0,1}')
 
 users = {}
 
@@ -46,29 +50,49 @@ async def message_handler(message: types.Message):
     if id not in users:
         users[id] = ''
 
-    if tx == 'Перевод 💸':
+    if users[id] == 'withdraw_qiwi_number':
+        if number_re.fullmatch(tx):
+            if tx[0] == '+':
+                number = tx
+            else:
+                number = '+' + tx
+            users[id] = 'withdraw_qiwi_amount_' + number
+        else:
+            await message.answer('Некорректный номер. Попробуйте ещё раз')
+
+    elif users[id].startswith('withdraw_qiwi_amount_'):
+        if amount_re.fullmatch(tx):
+            cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+            if cur.fetchone()[0] >= float(tx) * 100:
+                number = users[id].split('_')[-1]
+                amount = int(float(tx) * 100)
+                await bot.edit_message_text(f'Вы подтверждаете операцию превода: `{amount / 100:.2f}` ₽ на номер: *{number}*', id, message.message_id, reply_markup=CONFIRM_KB)
+                users[id] = f'withdraw_qiwi_confirm_{number}_{amount}'
+            else:
+                await message.answer('У вас недостаточно средств для совершения операции. Попробуйте ещё раз')
+        else:
+            await message.answer('Некорректная сумма. Попробуйте ещё раз')
+
+    elif tx == 'Перевод 💸':
         await message.answer('В разработке... 🛠')
 
     elif tx == 'Профиль 👤':
         await message.answer(f'*👤 Ваш профиль*\n\nID: `{id}`\nБаланс: `{user[1] / 100:.2f}` ₽', parse_mode='MarkdownV2')
 
     elif tx == 'Депозит 💰':
-        await message.reply('💰 Выберите метод пополнения', reply_markup=PAYMENT_METHODS_KB)
+        await message.reply('💰 Выберите метод пополнения', reply_markup=DEPOSIT_METHODS_KB)
 
     elif tx == 'Ваучеры 🎁':
         await message.answer('В разработке... 🛠')
 
     elif tx == 'Вывод 💳':
-        await message.answer('В разработке... 🛠')
+        await message.reply('💳 Выберите метод вывода', reply_markup=WITHDRAW_METHODS_KB)
 
     elif tx == 'Поддержка ❓':
         await message.answer('Поддержка: @hugopay_support\nКанал: @hugopay_news')
 
     elif tx == 'Настройки ⚙️':
         await message.answer('В разработке... 🛠')
-
-    elif users[id]:
-        pass
 
     elif id == 603660417:
         data = tx.split()
@@ -102,6 +126,19 @@ async def query_handler(query: types.CallbackQuery):
         number = cur.fetchone()[0]
         kb = InlineKeyboardMarkup().row(InlineKeyboardButton('Ссылка для депозита', url=QIWI_PAYMENT.format(number, id))).row(CANCEL)
         await bot.edit_message_text(f'Совершите депозит, нажав на кнопку с ссылкой под этим сообщением\\.\nВы также можете сделать перевод вручную по данным ниже:\nНомер: `\\+{number}`\nКомментарий: `{id}`', id, mid, reply_markup=kb, parse_mode='MarkdownV2')
+
+    elif dt == 'withdraw_qiwi':
+        await bot.edit_message_text('Отправте номер Qiwi кошелька в формате "+79991234567"', id, mid, reply_markup=CANCEL_KB)
+        users[id] = 'withdraw_qiwi_number'
+
+    elif dt == 'confirm':
+        if users[id].startswith('withdraw_qiwi_confirm_'):
+            number, amount = users[id].split('_')[-2:]
+            if qiwi_send(number, int(amount)):
+                await bot.edit_message_text(f'💸 Вывод `{amount / 100:.2f}` ₽ на кошелек Qiwi *{number}*', id, mid)
+            else:
+                await bot.edit_message_text('Произошла ошибка во время перевода. Попробуйте повторить позже', id, mid)
+
 
     await bot.answer_callback_query(query.id)
 
