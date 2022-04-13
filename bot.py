@@ -6,8 +6,6 @@ import sqlite3
 import logging
 
 
-API_TOKEN = '5162178464:AAHcPMoses63gVBWbhLiirO4tqCvPQoe4EA'
-
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
@@ -111,7 +109,7 @@ async def query_handler(query: types.CallbackQuery):
 if __name__ == '__main__':
     cur.execute('SELECT number, token FROM Qiwi WHERE 1')
     for number, token in cur.fetchall():
-        # print(number, token)
+        print(number, token)
         Thread(target=qiwi_handler, args=(number, token,)).start()
 
     executor.start_polling(dp, skip_updates=True)

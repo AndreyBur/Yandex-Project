@@ -1,6 +1,8 @@
 from aiogram.types import *
 
 
+API_TOKEN = '5162178464:AAHcPMoses63gVBWbhLiirO4tqCvPQoe4EA'
+
 QIWI_PAYMENT = 'https://qiwi.com/payment/form/99?extra%5B%27account%27%5D={}&extra%5B%27comment%27%5D={}&currency=643&blocked[0]=account&blocked[1]=comment'
 
 WELCOME = '''*👋 Добро пожаловать*
