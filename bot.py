@@ -1,7 +1,7 @@
 from aiogram import Bot, Dispatcher, executor, types
 from config import *
 from secret import *
-from payments import qiwi_handler, qiwi_send
+from payments import qiwi_handler, qiwi_send, qiwi_balance
 from threading import Thread, Lock
 import sqlite3
 import logging
@@ -56,34 +56,9 @@ async def message_handler(message: types.Message):
     if id not in users:
         users[id] = ''
 
-    if users[id] == 'withdraw_qiwi_number':
-        if number_re.fullmatch(tx):
-            if tx[0] == '+':
-                number = tx
-            else:
-                number = '+' + tx
-            users[id] = 'withdraw_qiwi_amount_' + number
-            await message.answer('Введите сумму для вывода')
-        else:
-            await message.answer('Некорректный номер. Попробуйте ещё раз')
-
-    elif users[id].startswith('withdraw_qiwi_amount_'):
-        if amount_re.fullmatch(tx):
-            with lock:
-                cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
-                res = cur.fetchone()[0]
-            if res >= float(tx) * 100:
-                number = users[id].split('_')[-1]
-                amount = int(float(tx) * 100)
-                await message.answer(f'Вы подтверждаете операцию превода `{amount / 100:.2f}` ₽ на номер *{number}*'.replace('+', '\\+'), parse_mode='MarkdownV2', reply_markup=CONFIRM_KB)
-                users[id] = f'withdraw_qiwi_confirm_{number}_{amount}'
-            else:
-                await message.answer('У вас недостаточно средств для совершения операции. Попробуйте ещё раз')
-        else:
-            await message.answer('Некорректная сумма. Попробуйте ещё раз')
-
-    elif tx == 'Перевод 💸':
-        await message.answer('В разработке... 🛠')
+    if tx == 'Перевод 💸':
+        await message.answer('Отправьте ID пользователя для перевода')
+        users[id] = 'send_id'
 
     elif tx == 'Профиль 👤':
         await message.answer(f'*👤 Ваш профиль*\n\nID: `{id}`\nБаланс: `{user[1] / 100:.2f}` ₽', parse_mode='MarkdownV2')
@@ -103,6 +78,83 @@ async def message_handler(message: types.Message):
     elif tx == 'Настройки ⚙️':
         await message.answer('В разработке... 🛠')
 
+    elif users[id] == 'withdraw_qiwi_number':
+        if number_re.fullmatch(tx):
+            if tx[0] == '+':
+                number = tx
+            else:
+                number = '+' + tx
+            users[id] = 'withdraw_qiwi_amount_' + number
+            await message.answer('Введите сумму для вывода')
+        else:
+            await message.answer('Некорректный номер! Попробуйте ещё раз.')
+
+    elif users[id].startswith('withdraw_qiwi_amount_'):
+        if amount_re.fullmatch(tx):
+            if '.' in tx:
+                amount = int(tx.split('.')[0]) * 100
+                if len(tx.split('.')[1]) == 1:
+                    amount += int(tx.split('.')[1]) * 10
+                else:
+                    amount += int(tx.split('.')[1])
+            else:
+                amount = int(tx) * 100
+
+            if amount >= 100:
+                with lock:
+                    cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+                    res = cur.fetchone()[0]
+                if res >= amount:
+                    number = users[id].split('_')[-1]
+                    await message.answer(f'Вы подтверждаете операцию превода `{amount / 100:.2f}` ₽ на номер *{number}*'.replace('+', '\\+'), parse_mode='MarkdownV2', reply_markup=CONFIRM_KB)
+                    users[id] = f'withdraw_qiwi_confirm_{number}_{amount}'
+                else:
+                    await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
+            else:
+                await message.answer('Минимальная сумма для вывода на Qiwi — `1.00` ₽', parse_mode='MarkdownV2')
+        else:
+            await message.answer('Некорректная сумма! Попробуйте ещё раз.')
+
+    elif users[id] == 'send_id':
+        if set(tx) <= set('0123456789') and 5 < len(tx) < 15:
+            with lock:
+                cur.execute(f'SELECT * FROM Users WHERE id = {tx}')
+                res = cur.fetchall()
+            if res:
+                await message.answer(f'Отправьте сумму перевода \\(макс\\. `{user[1] / 100:.2f}` ₽\\)', parse_mode='MarkdownV2')
+                users[id] = 'send_amount_' + tx
+            else:
+                await message.answer('Пользователь с таким ID не найден! Попробуйте еще раз.')
+        else:
+            await message.answer('Некорректный ID! Попробуйте еще раз.')
+
+    elif users[id].startswith('send_amount_'):
+        if amount_re.fullmatch(tx):
+            if '.' in tx:
+                amount = int(tx.split('.')[0]) * 100
+                if len(tx.split('.')[1]) == 1:
+                    amount += int(tx.split('.')[1]) * 10
+                else:
+                    amount += int(tx.split('.')[1])
+            else:
+                amount = int(tx) * 100
+
+            if amount > 0:
+                with lock:
+                    cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+                    res = cur.fetchone()[0]
+                if res >= amount:
+                    uid = users[id].split('_')[-1]
+                    amount = amount
+                    await message.answer(f'Вы подтверждаете операцию превода `{amount / 100:.2f}` ₽ пользователю *{uid}*', parse_mode='MarkdownV2', reply_markup=CONFIRM_KB)
+                    users[id] = f'send_confirm_{uid}_{amount}'
+                else:
+                    await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
+            else:
+                await message.answer('Минимальная сумма для перевода — `0.01` ₽', parse_mode='MarkdownV2')
+        else:
+            await message.answer('Некорректная сумма! Попробуйте ещё раз.')
+
     elif id == 603660417:
         data = tx.split()
 
@@ -113,12 +165,21 @@ async def message_handler(message: types.Message):
 
         elif tx.startswith('/add_wallet'):
             number, token = data[1:3]
-            print(number, token)
             with lock:
                 cur.execute(f'INSERT INTO Qiwi VALUES ("{number}", "{token}", 0)')
                 con.commit()
             Thread(target=qiwi_handler, args=(number, token, lock,)).start()
             await message.answer('done')
+
+        elif tx.startswith('/wallets'):
+            with lock:
+                cur.execute(f'SELECT number, token FROM Qiwi WHERE 1')
+                res = cur.fetchall()
+            result = []
+            for number, token in res:
+                result.append((number, qiwi_balance(number, token)))
+            print(result)
+            await message.answer('\n'.join([f'{number}: {balance / 100:.2f}' for number, balance in result]))
 
     else:
         await message.answer('Не понял вашего сообщения :(\nИспользуйте меню!', reply_markup=MAIN_KB)
@@ -140,7 +201,7 @@ async def query_handler(query: types.CallbackQuery):
         with lock:
             cur.execute('SELECT number FROM Qiwi ORDER BY RANDOM() LIMIT 1')
             number = cur.fetchone()[0]
-        kb = InlineKeyboardMarkup().row(InlineKeyboardButton('Ссылка для депозита', url=QIWI_PAYMENT.format(number, id))).row(CANCEL)
+        kb = InlineKeyboardMarkup().row(InlineKeyboardButton('Ссылка для депозита', url=QIWI_PAYMENT.format(number, id)))
         await bot.edit_message_text(f'Совершите депозит, нажав на кнопку с ссылкой под этим сообщением\\.\nВы также можете сделать перевод вручную по данным ниже:\nНомер: `\\+{number}`\nКомментарий: `{id}`', id, mid, reply_markup=kb, parse_mode='MarkdownV2')
 
     elif dt == 'withdraw_qiwi':
@@ -151,14 +212,32 @@ async def query_handler(query: types.CallbackQuery):
         if users[id].startswith('withdraw_qiwi_confirm_'):
             number, amount = users[id].split('_')[-2:]
             amount = int(amount)
-            if qiwi_send(number, int(amount), lock):
-                with lock:
-                    cur.execute(f'UPDATE Users SET balance = balance - {amount} WHERE id = {id}')
-                    con.commit()
-                await bot.edit_message_text(f'💸 Вывод `{amount / 100:.2f}` ₽ на кошелек Qiwi *{number}*'.replace('+', '\\+'), id, mid, parse_mode='MarkdownV2')
-            else:
-                await bot.edit_message_text('Произошла ошибка во время перевода. Попробуйте повторить позже', id, mid)
+            with lock:
+                cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+                res = cur.fetchone()[0]
+                if res >= amount:
+                    if qiwi_send(number, amount, lock):
+                        cur.execute(f'UPDATE Users SET balance = balance - {amount} WHERE id = {id}')
+                        con.commit()
+                        await bot.edit_message_text(f'💸 Вывод `{amount / 100:.2f}` ₽ на кошелек Qiwi *{number}*'.replace('+', '\\+'), id, mid, parse_mode='MarkdownV2')
+                    else:
+                        await bot.edit_message_text('Произошла ошибка во время перевода! Попробуйте повторить позже.', id, mid)
+                else:
+                    await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
 
+        elif users[id].startswith('send_confirm_'):
+            uid, amount = map(int, users[id].split('_')[-2:])
+            with lock:
+                cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+                res = cur.fetchone()[0]
+                if res >= amount:
+                    cur.execute(f'UPDATE Users SET balance = balance - {amount} WHERE id = {id}')
+                    cur.execute(f'UPDATE Users SET balance = balance + {amount} WHERE id = {uid}')
+                    con.commit()
+                    await bot.edit_message_text(f'💸 Перевод `{amount / 100:.2f}` ₽ пользователю *{uid}*', id, mid, parse_mode='MarkdownV2')
+                    await bot.send_message(uid, f'💰 Вы получили перевод `{amount / 100:.2f}` ₽ от пользователя *{id}*', parse_mode='MarkdownV2')
+                else:
+                    await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
 
     await bot.answer_callback_query(query.id)
 
@@ -166,7 +245,6 @@ async def query_handler(query: types.CallbackQuery):
 if __name__ == '__main__':
     cur.execute('SELECT number, token FROM Qiwi WHERE 1')
     for number, token in cur.fetchall():
-        print(number, token)
         Thread(target=qiwi_handler, args=(number, token, lock,)).start()
 
     executor.start_polling(dp, skip_updates=True)

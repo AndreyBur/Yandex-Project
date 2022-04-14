@@ -1,4 +1,5 @@
 from config import *
+from secret import *
 import requests
 import time
 import sqlite3
@@ -56,26 +57,28 @@ def qiwi_handler(number, token, lock):
 
 
 def qiwi_send(number, amount, lock):
-    with lock:
-        cur.execute(f'SELECT number, token FROM Qiwi WHERE 1')
-        res = cur.fetchall()
+    cur.execute(f'SELECT number, token FROM Qiwi WHERE 1')
+    res = cur.fetchall()
 
     for number_, token in res:
         if qiwi_balance(number_, token) >= amount:
-            headers = {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'Authorization': f'Bearer {token}'
-            }
-            json = {
-                'id': str(int(time.time() * 1000)),
-                'sum': {'amount': str(int(amount) / 100), 'currency': '643'},
-                'paymentMethod': {'type': 'Account', 'accountId': '643'},
-                'comment': 't.me/hugopay_bot',
-                'fields': {'account': number}
-            }
-            response = requests.post('https://edge.qiwi.com/sinap/api/v2/terms/99/payments', headers=headers, json=json)
-            return response.json()['transaction']['state']['code'] == 'Accepted'
+            try:
+                headers = {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Authorization': f'Bearer {token}'
+                }
+                json = {
+                    'id': str(int(time.time() * 1000)),
+                    'sum': {'amount': str(int(amount) / 100), 'currency': '643'},
+                    'paymentMethod': {'type': 'Account', 'accountId': '643'},
+                    'comment': 't.me/hugopay_bot',
+                    'fields': {'account': number}
+                }
+                response = requests.post('https://edge.qiwi.com/sinap/api/v2/terms/99/payments', headers=headers, json=json)
+                return response.json()['transaction']['state']['code'] == 'Accepted'
+            except:
+                return False
 
     return False
 
@@ -88,5 +91,4 @@ if __name__ == '__main__':
     exit()
 
     for number, token in cur.fetchall():
-        print(number, token)
         qiwi_handler(number, token)
