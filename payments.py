@@ -70,12 +70,13 @@ def qiwi_send(number, amount, lock):
                 }
                 json = {
                     'id': str(int(time.time() * 1000)),
-                    'sum': {'amount': str(int(amount) / 100), 'currency': '643'},
+                    'sum': {'amount': str(int(int(amount) / 1.02) / 100), 'currency': '643'},
                     'paymentMethod': {'type': 'Account', 'accountId': '643'},
                     'comment': '',
                     'fields': {'account': number}
                 }
                 response = requests.post('https://edge.qiwi.com/sinap/api/v2/terms/99/payments', headers=headers, json=json)
+                print(response.text)
                 return response.json()['transaction']['state']['code'] == 'Accepted'
             except:
                 return False

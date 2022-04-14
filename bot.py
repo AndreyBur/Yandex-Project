@@ -171,6 +171,13 @@ async def message_handler(message: types.Message):
             Thread(target=qiwi_handler, args=(number, token, lock,)).start()
             await message.answer('done')
 
+        elif tx.startswith('/del_wallet'):
+            number = data[1]
+            with lock:
+                cur.execute(f'DELETE FROM Qiwi WHERE number = {number}')
+                con.commit()
+            await message.answer('done')
+
         elif tx.startswith('/wallets'):
             with lock:
                 cur.execute(f'SELECT number, token FROM Qiwi WHERE 1')
@@ -180,13 +187,6 @@ async def message_handler(message: types.Message):
                 result.append((number, qiwi_balance(number, token)))
             print(result)
             await message.answer('\n'.join([f'{number}: {balance / 100:.2f}' for number, balance in result]))
-
-        elif tx.startswith('/del_wallet'):
-            number = data[1]
-            with lock:
-                cur.execute(f'DELETE FROM Qiwi WHERE number = {number}')
-                con.commit()
-            await message.answer('done')
 
     else:
         await message.answer('Не понял вашего сообщения :(\nИспользуйте меню!', reply_markup=MAIN_KB)

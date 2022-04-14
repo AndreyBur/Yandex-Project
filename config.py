@@ -33,7 +33,7 @@ DEPOSIT_METHODS_KB.row(CANCEL)
 
 WITHDRAW_METHODS_KB = InlineKeyboardMarkup()
 WITHDRAW_METHODS_KB.row(
-    InlineKeyboardButton('Qiwi 🥝', callback_data='withdraw_qiwi'),
+    InlineKeyboardButton('Qiwi 2% 🥝', callback_data='withdraw_qiwi'),
     # InlineKeyboardButton('BNB (BEP20) 🟢', callback_data='deposit_bnbbep20')
 )
 WITHDRAW_METHODS_KB.row(CANCEL)
