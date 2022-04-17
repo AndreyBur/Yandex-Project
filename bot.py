@@ -6,6 +6,8 @@ from threading import Thread, Lock
 import sqlite3
 import logging
 import re
+import json
+import random
 
 
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +29,13 @@ cur.execute('''CREATE TABLE IF NOT EXISTS Qiwi (
     token TEXT,
     txn_id INTEGER
 )''')
+cur.execute('''CREATE TABLE IF NOT EXISTS Vouchers (
+    id INTEGER PRIMARY KEY,
+    amount INTEGER,
+    activations INTEGER,
+    users TEXT,
+    creator INTEGER
+)''')
 
 number_re = re.compile(r'[\d|+]\d{6,12}')
 amount_re = re.compile(r'\d+(.\d{1,2}){0,1}')
@@ -36,7 +45,40 @@ users = {}
 
 @dp.message_handler(commands=['start', 'help'])
 async def command_handler(message: types.Message):
-    await message.answer(WELCOME, parse_mode='MarkdownV2', reply_markup=MAIN_KB)
+    tx, id = message.text, message.from_user.id
+
+    with lock:
+        cur.execute(f'SELECT * FROM Users WHERE id = {id}')
+        if not cur.fetchone():
+            cur.execute(f'''INSERT INTO Users VALUES ({id}, 0)''')
+            con.commit()
+
+    if tx.startswith('/start '):
+        a, v = tx[7], tx[9:]
+        print([a, v])
+        if a == 'v':
+            # Voucher
+            with lock:
+                cur.execute(f'SELECT * FROM Vouchers WHERE id = {v}')
+                voucher = cur.fetchone()
+                if voucher:
+                    u = json.loads(voucher[3])
+                    if id not in u:
+                        u.append(id)
+                        if voucher[2] == 1:
+                            cur.execute(f'DELETE FROM Vouchers WHERE id = {v}')
+                        else:
+                            cur.execute(f'UPDATE Vouchers SET activations = activations - 1, users = "{json.dumps(u)}" WHERE id = {v}')
+                        cur.execute(f'UPDATE Users SET balance = balance + {voucher[1]} WHERE id = {id}')
+                        con.commit()
+                        await message.answer(f'🎁 Ваучер активирован\\!\nВы получили: `{voucher[1] / 100:.2f}` ₽', parse_mode='MarkdownV2', reply_markup=MAIN_KB)
+                        await bot.send_message(voucher[4], f'🎁 `{id}` активировал ваш ваучер на `{voucher[1] / 100:.2f}` ₽', parse_mode='MarkdownV2')
+                    else:
+                        await message.answer('Вы уже активировали этот ваучер!', reply_markup=MAIN_KB)
+                else:
+                    await message.answer('Ваучер не найден! Возможно, его уже активировали максимальное количество раз.', reply_markup=MAIN_KB)
+    else:
+        await message.answer(WELCOME, parse_mode='MarkdownV2', reply_markup=MAIN_KB)
 
 
 @dp.message_handler()
@@ -67,7 +109,8 @@ async def message_handler(message: types.Message):
         await message.reply('💰 Выберите метод пополнения', reply_markup=DEPOSIT_METHODS_KB)
 
     elif tx == 'Ваучеры 🎁':
-        await message.answer('В разработке... 🛠')
+        await message.answer('Отправьте сумму одной активации ваучера \\(мин\\. `1.00` ₽\\)', parse_mode='MarkdownV2')
+        users[id] = 'voucher_amount'
 
     elif tx == 'Вывод 💳':
         await message.reply('💳 Выберите метод вывода', reply_markup=WITHDRAW_METHODS_KB)
@@ -145,13 +188,61 @@ async def message_handler(message: types.Message):
                     res = cur.fetchone()[0]
                 if res >= amount:
                     uid = users[id].split('_')[-1]
-                    amount = amount
                     await message.answer(f'Вы подтверждаете операцию превода `{amount / 100:.2f}` ₽ пользователю *{uid}*', parse_mode='MarkdownV2', reply_markup=CONFIRM_KB)
                     users[id] = f'send_confirm_{uid}_{amount}'
                 else:
                     await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
             else:
                 await message.answer('Минимальная сумма для перевода — `0.01` ₽', parse_mode='MarkdownV2')
+        else:
+            await message.answer('Некорректная сумма! Попробуйте ещё раз.')
+
+    elif users[id] == 'voucher_amount':
+        if amount_re.fullmatch(tx):
+            if '.' in tx:
+                amount = int(tx.split('.')[0]) * 100
+                if len(tx.split('.')[1]) == 1:
+                    amount += int(tx.split('.')[1]) * 10
+                else:
+                    amount += int(tx.split('.')[1])
+            else:
+                amount = int(tx) * 100
+
+            if amount >= 100:
+                with lock:
+                    cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+                    res = cur.fetchone()[0]
+                if res >= amount:
+                    await message.answer(f'Отправьте количество активаций ваучера \\(макс\\. `{res // amount}`\\)', parse_mode='MarkdownV2')
+                    users[id] = f'voucher_number_{amount}'
+                else:
+                    await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
+            else:
+                await message.answer('Минимальная сумма ваучера — `1.00` ₽', parse_mode='MarkdownV2')
+        else:
+            await message.answer('Некорректная сумма! Попробуйте ещё раз.')
+
+    elif users[id].startswith('voucher_number'):
+        if set(tx) <= set('0123456789') and int(tx) > 0:
+            amount, number = int(users[id].split('_')[-1]), int(tx)
+            with lock:
+                cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
+                res = cur.fetchone()[0]
+            if res >= amount * number:
+                # nice, let's create voucher
+                while True:
+                    voucher = random.randint(1000000, 9999999)
+                    cur.execute(f'SELECT * FROM Vouchers WHERE id = {voucher}')
+                    if not cur.fetchall():
+                        break
+                cur.execute(f'INSERT INTO Vouchers VALUES ({voucher}, {amount}, {number}, "[]", {id})')
+                cur.execute(f'UPDATE Users SET balance = balance - {amount * number} WHERE id = {id}')
+                con.commit()
+                users[id] = ''
+                kb = InlineKeyboardMarkup().row(InlineKeyboardButton(text='🎈 Поделиться', switch_inline_query=f't.me/hugopay_bot?start=v_{voucher}'))
+                await message.answer(f'Ваучер создан\\!\n`{number}` Активаций по `{amount / 100:.2f}` ₽\n\nt\\.me/hugopay\\_bot?start\\=v\\_{voucher}', parse_mode='MarkdownV2', reply_markup=kb)
+            else:
+                await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
         else:
             await message.answer('Некорректная сумма! Попробуйте ещё раз.')
 

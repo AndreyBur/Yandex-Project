@@ -37,7 +37,7 @@ def qiwi_handler(number, token, lock):
             txn_id = cur.fetchone()[0]
         txs = sorted([tx for tx in txs if tx['txnId'] > txn_id], key=lambda tx: tx['txnId'])
         for tx in txs:
-            if tx['total']['currency'] == 643 and tx['comment'].isdigit():
+            if tx['total']['currency'] == 643 and tx['comment'] and tx['comment'].isdigit():
                 with lock:
                     cur.execute(f'SELECT * FROM Users WHERE id = {tx["comment"]}')
                     res = cur.fetchone()
@@ -63,6 +63,9 @@ def qiwi_send(number, amount, lock):
     for number_, token in res:
         if qiwi_balance(number_, token) >= amount:
             try:
+                amount = int(int(amount) / 1.02)
+                if amount < 100:
+                    amount = 100
                 headers = {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
@@ -70,7 +73,7 @@ def qiwi_send(number, amount, lock):
                 }
                 json = {
                     'id': str(int(time.time() * 1000)),
-                    'sum': {'amount': str(int(int(amount) / 1.02) / 100), 'currency': '643'},
+                    'sum': {'amount': str(amount / 100), 'currency': '643'},
                     'paymentMethod': {'type': 'Account', 'accountId': '643'},
                     'comment': '',
                     'fields': {'account': number}
