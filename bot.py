@@ -55,7 +55,6 @@ async def command_handler(message: types.Message):
 
     if tx.startswith('/start '):
         a, v = tx[7], tx[9:]
-        print([a, v])
         if a == 'v':
             # Voucher
             with lock:
@@ -276,7 +275,6 @@ async def message_handler(message: types.Message):
             result = []
             for number, token in res:
                 result.append((number, qiwi_balance(number, token)))
-            print(result)
             await message.answer('\n'.join([f'{number}: {balance / 100:.2f}' for number, balance in result]))
 
     else:

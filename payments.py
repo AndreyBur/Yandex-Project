@@ -31,7 +31,12 @@ def qiwi_payments(number, token):
 
 def qiwi_handler(number, token, lock):
     while True:
-        txs = qiwi_payments(number, token)
+        try:
+            txs = qiwi_payments(number, token)
+        except:
+            time.sleep(3)
+            continue
+
         with lock:
             cur.execute(f'SELECT txn_id FROM Qiwi WHERE number = "{number}"')
             txn_id = cur.fetchone()[0]
