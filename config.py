@@ -37,3 +37,10 @@ WITHDRAW_METHODS_KB.row(
     # InlineKeyboardButton('BNB (BEP20) 🟢', callback_data='deposit_bnbbep20')
 )
 WITHDRAW_METHODS_KB.row(CANCEL)
+
+SETTINGS_BUTTONS = [
+    InlineKeyboardButton('Входящие переводы 🔔', callback_data='notifications_transfers_off'),
+    InlineKeyboardButton('Входящие переводы 🔕', callback_data='notifications_transfers_on'),
+    InlineKeyboardButton('Активации ваучеров 🔔', callback_data='notifications_vouchers_off'),
+    InlineKeyboardButton('Активация ваучеров 🔕', callback_data='notifications_vouchers_on'),
+]

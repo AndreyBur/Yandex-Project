@@ -8,6 +8,7 @@ import logging
 import re
 import json
 import random
+import string
 
 
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +23,8 @@ cur = con.cursor()
 
 cur.execute('''CREATE TABLE IF NOT EXISTS Users (
     id INTEGER PRIMARY KEY,
-    balance INTEGER
+    balance INTEGER,
+    settings TEXT
 )''')
 cur.execute('''CREATE TABLE IF NOT EXISTS Qiwi (
     number TEXT PRIMARY KEY,
@@ -30,7 +32,7 @@ cur.execute('''CREATE TABLE IF NOT EXISTS Qiwi (
     txn_id INTEGER
 )''')
 cur.execute('''CREATE TABLE IF NOT EXISTS Vouchers (
-    id INTEGER PRIMARY KEY,
+    id STRING PRIMARY KEY,
     amount INTEGER,
     activations INTEGER,
     users TEXT,
@@ -42,6 +44,13 @@ amount_re = re.compile(r'\d+(.\d{1,2}){0,1}')
 
 users = {}
 
+DEFAULT_SETTINGS = json.dumps({
+    'notifications_transfers': True,
+    'notifications_vouchers': True
+})
+
+ALPHABET = string.ascii_letters + string.digits
+
 
 @dp.message_handler(commands=['start', 'help'])
 async def command_handler(message: types.Message):
@@ -50,7 +59,7 @@ async def command_handler(message: types.Message):
     with lock:
         cur.execute(f'SELECT * FROM Users WHERE id = {id}')
         if not cur.fetchone():
-            cur.execute(f'''INSERT INTO Users VALUES ({id}, 0)''')
+            cur.execute(f'''INSERT INTO Users VALUES ({id}, 1000, '{DEFAULT_SETTINGS}')''')
             con.commit()
 
     if tx.startswith('/start '):
@@ -58,20 +67,23 @@ async def command_handler(message: types.Message):
         if a == 'v':
             # Voucher
             with lock:
-                cur.execute(f'SELECT * FROM Vouchers WHERE id = {v}')
+                cur.execute(f'SELECT * FROM Vouchers WHERE id = "{v}"')
                 voucher = cur.fetchone()
                 if voucher:
                     u = json.loads(voucher[3])
                     if id not in u:
                         u.append(id)
                         if voucher[2] == 1:
-                            cur.execute(f'DELETE FROM Vouchers WHERE id = {v}')
+                            cur.execute(f'DELETE FROM Vouchers WHERE id = "{v}"')
                         else:
-                            cur.execute(f'UPDATE Vouchers SET activations = activations - 1, users = "{json.dumps(u)}" WHERE id = {v}')
+                            cur.execute(f'UPDATE Vouchers SET activations = activations - 1, users = "{json.dumps(u)}" WHERE id = "{v}"')
                         cur.execute(f'UPDATE Users SET balance = balance + {voucher[1]} WHERE id = {id}')
                         con.commit()
                         await message.answer(f'🎁 Ваучер активирован\\!\nВы получили: `{voucher[1] / 100:.2f}` ₽', parse_mode='MarkdownV2', reply_markup=MAIN_KB)
-                        await bot.send_message(voucher[4], f'🎁 `{id}` активировал ваш ваучер на `{voucher[1] / 100:.2f}` ₽', parse_mode='MarkdownV2')
+                        cur.execute(f'SELECT settings FROM Users WHERE id = {voucher[4]}')
+                        settings = json.loads(cur.fetchone()[0])
+                        if settings['notifications_vouchers']:
+                            await bot.send_message(voucher[4], f'🎁 [{id}](tg://user?id={id}) активировал ваш ваучер на `{voucher[1] / 100:.2f}` ₽', parse_mode='MarkdownV2')
                     else:
                         await message.answer('Вы уже активировали этот ваучер!', reply_markup=MAIN_KB)
                 else:
@@ -90,9 +102,9 @@ async def message_handler(message: types.Message):
 
     if not user:
         with lock:
-            cur.execute(f'''INSERT INTO Users VALUES ({id}, 0)''')
+            cur.execute(f'''INSERT INTO Users VALUES ({id}, 0, '{DEFAULT_SETTINGS}')''')
             con.commit()
-        user = (id, 0,)
+        user = (id, 0, DEFAULT_SETTINGS)
 
     if id not in users:
         users[id] = ''
@@ -118,7 +130,11 @@ async def message_handler(message: types.Message):
         await message.answer('Поддержка: @hugopay_support\nКанал: @hugopay_news')
 
     elif tx == 'Настройки ⚙️':
-        await message.answer('В разработке... 🛠')
+        settings = json.loads(user[2])
+        kb = InlineKeyboardMarkup()
+        kb.row(SETTINGS_BUTTONS[int(not settings['notifications_transfers'])])
+        kb.row(SETTINGS_BUTTONS[2 + int(not settings['notifications_vouchers'])])
+        await message.answer('⚙️ Ваши настройки уведомлений', reply_markup=kb)
 
     elif users[id] == 'withdraw_qiwi_number':
         if number_re.fullmatch(tx):
@@ -230,11 +246,11 @@ async def message_handler(message: types.Message):
             if res >= amount * number:
                 # nice, let's create voucher
                 while True:
-                    voucher = random.randint(1000000, 9999999)
-                    cur.execute(f'SELECT * FROM Vouchers WHERE id = {voucher}')
+                    voucher = ''.join([random.choice(ALPHABET) for _ in range(20)])
+                    cur.execute(f'SELECT * FROM Vouchers WHERE id = "{voucher}"')
                     if not cur.fetchall():
                         break
-                cur.execute(f'INSERT INTO Vouchers VALUES ({voucher}, {amount}, {number}, "[]", {id})')
+                cur.execute(f'INSERT INTO Vouchers VALUES ("{voucher}", {amount}, {number}, "[]", {id})')
                 cur.execute(f'UPDATE Users SET balance = balance - {amount * number} WHERE id = {id}')
                 con.commit()
                 users[id] = ''
@@ -293,6 +309,26 @@ async def query_handler(query: types.CallbackQuery):
             pass
         await bot.delete_message(id, mid)
 
+    elif dt.startswith('notifications_'):
+        with lock:
+            cur.execute(f'SELECT settings FROM Users WHERE id = {id}')
+        settings = json.loads(cur.fetchone()[0])
+        if dt == 'notifications_transfers_on':
+            settings['notifications_transfers'] = True
+        elif dt == 'notifications_transfers_off':
+            settings['notifications_transfers'] = False
+        elif dt == 'notifications_vouchers_on':
+            settings['notifications_vouchers'] = True
+        elif dt == 'notifications_vouchers_off':
+            settings['notifications_vouchers'] = False
+        with lock:
+            cur.execute(f'''UPDATE Users SET settings = '{json.dumps(settings)}' WHERE id = {id}''')
+        kb = InlineKeyboardMarkup()
+        kb.row(SETTINGS_BUTTONS[int(not settings['notifications_transfers'])])
+        kb.row(SETTINGS_BUTTONS[2 + int(not settings['notifications_vouchers'])])
+        await bot.edit_message_text('⚙️ Ваши настройки уведомлений', id, mid, reply_markup=kb)
+
+
     elif dt == 'deposit_qiwi':
         with lock:
             cur.execute('SELECT number FROM Qiwi ORDER BY RANDOM() LIMIT 1')
@@ -331,7 +367,10 @@ async def query_handler(query: types.CallbackQuery):
                     cur.execute(f'UPDATE Users SET balance = balance + {amount} WHERE id = {uid}')
                     con.commit()
                     await bot.edit_message_text(f'💸 Перевод `{amount / 100:.2f}` ₽ пользователю *{uid}*', id, mid, parse_mode='MarkdownV2')
-                    await bot.send_message(uid, f'💰 Вы получили перевод `{amount / 100:.2f}` ₽ от пользователя *{id}*', parse_mode='MarkdownV2')
+                    cur.execute(f'SELECT settings FROM Users WHERE id = {uid}')
+                    settings = json.loads(cur.fetchone()[0])
+                    if settings['notifications_transfers']:
+                        await bot.send_message(uid, f'💰 Вы получили перевод `{amount / 100:.2f}` ₽ от пользователя *{id}*', parse_mode='MarkdownV2')
                 else:
                     await message.answer('У вас недостаточно средств для совершения операции! Попробуйте ещё раз.')
 
