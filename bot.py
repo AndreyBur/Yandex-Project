@@ -52,17 +52,27 @@ DEFAULT_SETTINGS = json.dumps({
 ALPHABET = string.ascii_letters + string.digits
 
 
-@dp.message_handler(commands=['start', 'help'])
-async def command_handler(message: types.Message):
+@dp.message_handler()
+async def message_handler(message: types.Message):
     tx, id = message.text, message.from_user.id
 
     with lock:
         cur.execute(f'SELECT * FROM Users WHERE id = {id}')
-        if not cur.fetchone():
-            cur.execute(f'''INSERT INTO Users VALUES ({id}, 1000, '{DEFAULT_SETTINGS}')''')
-            con.commit()
+        user = cur.fetchone()
 
-    if tx.startswith('/start '):
+    if not user:
+        with lock:
+            cur.execute(f'''INSERT INTO Users VALUES ({id}, 0, '{DEFAULT_SETTINGS}')''')
+            con.commit()
+        user = (id, 0, DEFAULT_SETTINGS)
+
+    if id not in users:
+        users[id] = ''
+
+    if tx == '/start':
+        await message.answer(WELCOME, parse_mode='MarkdownV2', reply_markup=MAIN_KB)
+
+    elif tx.startswith('/start '):
         a, v = tx[7], tx[9:]
         if a == 'v':
             # Voucher
@@ -88,28 +98,8 @@ async def command_handler(message: types.Message):
                         await message.answer('Вы уже активировали этот ваучер!', reply_markup=MAIN_KB)
                 else:
                     await message.answer('Ваучер не найден! Возможно, его уже активировали максимальное количество раз.', reply_markup=MAIN_KB)
-    else:
-        await message.answer(WELCOME, parse_mode='MarkdownV2', reply_markup=MAIN_KB)
 
-
-@dp.message_handler()
-async def message_handler(message: types.Message):
-    tx, id = message.text, message.from_user.id
-
-    with lock:
-        cur.execute(f'SELECT * FROM Users WHERE id = {id}')
-        user = cur.fetchone()
-
-    if not user:
-        with lock:
-            cur.execute(f'''INSERT INTO Users VALUES ({id}, 0, '{DEFAULT_SETTINGS}')''')
-            con.commit()
-        user = (id, 0, DEFAULT_SETTINGS)
-
-    if id not in users:
-        users[id] = ''
-
-    if tx == 'Перевод 💸':
+    elif tx == 'Перевод 💸':
         await message.answer('Отправьте ID пользователя для перевода')
         users[id] = 'send_id'
 
@@ -120,8 +110,7 @@ async def message_handler(message: types.Message):
         await message.reply('💰 Выберите метод пополнения', reply_markup=DEPOSIT_METHODS_KB)
 
     elif tx == 'Ваучеры 🎁':
-        await message.answer('Отправьте сумму одной активации ваучера \\(мин\\. `1.00` ₽\\)', parse_mode='MarkdownV2')
-        users[id] = 'voucher_amount'
+        await message.answer('Вы сможете создать специальную ссылку-ваучер, при переходе по которой, пользователи будут получать заданную сумму.\nМожно настраивать количество активаций ваучера и сумму каждой активации.', reply_markup=VOUCHERS_KB)
 
     elif tx == 'Вывод 💳':
         await message.reply('💳 Выберите метод вывода', reply_markup=WITHDRAW_METHODS_KB)
@@ -212,7 +201,8 @@ async def message_handler(message: types.Message):
         else:
             await message.answer('Некорректная сумма! Попробуйте ещё раз.')
 
-    elif users[id] == 'voucher_amount':
+    elif users[id].startswith('voucher_amount'):
+        mid = int(users[id].split('_')[-1])
         if amount_re.fullmatch(tx):
             if '.' in tx:
                 amount = int(tx.split('.')[0]) * 100
@@ -228,6 +218,7 @@ async def message_handler(message: types.Message):
                     cur.execute(f'SELECT balance FROM Users WHERE id = {id}')
                     res = cur.fetchone()[0]
                 if res >= amount:
+                    await bot.edit_message_text('Отправьте сумму одной активации ваучера \\(мин\\. `1.00` ₽\\)', id, mid, parse_mode='MarkdownV2')
                     await message.answer(f'Отправьте количество активаций ваучера \\(макс\\. `{res // amount}`\\)', parse_mode='MarkdownV2')
                     users[id] = f'voucher_number_{amount}'
                 else:
@@ -247,12 +238,14 @@ async def message_handler(message: types.Message):
                 # nice, let's create voucher
                 while True:
                     voucher = ''.join([random.choice(ALPHABET) for _ in range(20)])
-                    cur.execute(f'SELECT * FROM Vouchers WHERE id = "{voucher}"')
-                    if not cur.fetchall():
-                        break
-                cur.execute(f'INSERT INTO Vouchers VALUES ("{voucher}", {amount}, {number}, "[]", {id})')
-                cur.execute(f'UPDATE Users SET balance = balance - {amount * number} WHERE id = {id}')
-                con.commit()
+                    with lock:
+                        cur.execute(f'SELECT * FROM Vouchers WHERE id = "{voucher}"')
+                        if not cur.fetchall():
+                            break
+                with lock:
+                    cur.execute(f'INSERT INTO Vouchers VALUES ("{voucher}", {amount}, {number}, "[]", {id})')
+                    cur.execute(f'UPDATE Users SET balance = balance - {amount * number} WHERE id = {id}')
+                    con.commit()
                 users[id] = ''
                 kb = InlineKeyboardMarkup().row(InlineKeyboardButton(text='🎈 Поделиться', switch_inline_query=f't.me/hugopay_bot?start=v_{voucher}'))
                 await message.answer(f'Ваучер создан\\!\n`{number}` Активаций по `{amount / 100:.2f}` ₽\n\nt\\.me/hugopay\\_bot?start\\=v\\_{voucher}', parse_mode='MarkdownV2', reply_markup=kb)
@@ -309,10 +302,58 @@ async def query_handler(query: types.CallbackQuery):
             pass
         await bot.delete_message(id, mid)
 
+    elif dt.startswith('delete_'):
+        v = dt[7:]
+        with lock:
+            cur.execute(f'SELECT amount, activations FROM Vouchers WHERE id = "{v}"')
+            voucher = cur.fetchone()
+            if voucher:
+                cur.execute(f'UPDATE Users SET balance = balance + {voucher[0] * voucher[1]} WHERE id = {id}')
+                cur.execute(f'DELETE FROM Vouchers WHERE id = "{v}"')
+                con.commit()
+                await bot.send_message(id, f'Ваучер обналичен\\!\nНа баланс возвращено `{voucher[0] * voucher[1] / 100:.2f}` ₽', parse_mode='MarkdownV2')
+
+                cur.execute(f'SELECT * FROM Vouchers WHERE creator = {id}')
+                vs = cur.fetchall()
+                kb = InlineKeyboardMarkup()
+                if vs:
+                    vouchers = '\n\n'.join([f'*{i + 1}*\\. t\\.me/hugopay\\_bot?start\\=v\\_{v[0]}\nСумма: `{v[1] / 100:.2f}` ₽\nАктиваций осталось: *{v[2]}*' for i, v in enumerate(vs)])
+                    vouchers += '\n\nНажмите на номер ваучера для его обналичивания\\.\nЭто вернет вам сумму оставшихся активаций на баланс\\.'
+                    for i, v in enumerate(vs):
+                        kb.add(InlineKeyboardButton(str(i + 1), callback_data='delete_' + v[0]))
+                else:
+                    vouchers = 'У вас нет активных ваучеров'
+                kb.add(VOUCHERS_BACK)
+                await bot.edit_message_text('Список ваших активных ваучеров:\n\n' + vouchers, id, mid, parse_mode='MarkdownV2', reply_markup=kb, disable_web_page_preview=True)
+
+    elif dt == 'vouchers_list':
+        with lock:
+            cur.execute(f'SELECT * FROM Vouchers WHERE creator = {id}')
+            vs = cur.fetchall()
+        kb = InlineKeyboardMarkup()
+        if vs:
+            vouchers = '\n\n'.join([f'*{i + 1}*\\. t\\.me/hugopay\\_bot?start\\=v\\_{v[0]}\nСумма: `{v[1] / 100:.2f}` ₽\nАктиваций осталось: *{v[2]}*' for i, v in enumerate(vs)])
+            vouchers += '\n\nНажмите на номер ваучера для его обналичивания\\.\nЭто вернет вам сумму оставшихся активаций на баланс\\.'
+            for i, v in enumerate(vs):
+                kb.add(InlineKeyboardButton(str(i + 1), callback_data='delete_' + v[0]))
+        else:
+            vouchers = 'У вас нет активных ваучеров'
+        kb.add(VOUCHERS_BACK)
+        await bot.edit_message_text('Список ваших активных ваучеров:\n\n' + vouchers, id, mid, parse_mode='MarkdownV2', reply_markup=kb, disable_web_page_preview=True)
+
+    elif dt == 'vouchers_create':
+        kb = InlineKeyboardMarkup().add(VOUCHERS_BACK)
+        await bot.edit_message_text('Отправьте сумму одной активации ваучера \\(мин\\. `1.00` ₽\\)', id, mid, parse_mode='MarkdownV2', reply_markup=kb)
+        users[id] = 'voucher_amount_' + str(mid)
+
+    elif dt == 'vouchers_back':
+        users[id] = ''
+        await bot.edit_message_text('Вы сможете создать специальную ссылку-ваучер, при переходе по которой, пользователи будут получать заданную сумму.\nМожно настраивать количество активаций ваучера и сумму каждой активации.', id, mid, reply_markup=VOUCHERS_KB)
+
     elif dt.startswith('notifications_'):
         with lock:
             cur.execute(f'SELECT settings FROM Users WHERE id = {id}')
-        settings = json.loads(cur.fetchone()[0])
+            settings = json.loads(cur.fetchone()[0])
         if dt == 'notifications_transfers_on':
             settings['notifications_transfers'] = True
         elif dt == 'notifications_transfers_off':
@@ -327,7 +368,6 @@ async def query_handler(query: types.CallbackQuery):
         kb.row(SETTINGS_BUTTONS[int(not settings['notifications_transfers'])])
         kb.row(SETTINGS_BUTTONS[2 + int(not settings['notifications_vouchers'])])
         await bot.edit_message_text('⚙️ Ваши настройки уведомлений', id, mid, reply_markup=kb)
-
 
     elif dt == 'deposit_qiwi':
         with lock:

@@ -24,15 +24,13 @@ CANCEL_KB = InlineKeyboardMarkup().add(CANCEL)
 
 CONFIRM_KB = InlineKeyboardMarkup().row(CONFIRM, CANCEL_2)
 
-DEPOSIT_METHODS_KB = InlineKeyboardMarkup()
-DEPOSIT_METHODS_KB.row(
+DEPOSIT_METHODS_KB = InlineKeyboardMarkup().row(
     InlineKeyboardButton('Qiwi 🥝', callback_data='deposit_qiwi'),
     # InlineKeyboardButton('BNB (BEP20) 🟢', callback_data='deposit_bnbbep20')
 )
 DEPOSIT_METHODS_KB.row(CANCEL)
 
-WITHDRAW_METHODS_KB = InlineKeyboardMarkup()
-WITHDRAW_METHODS_KB.row(
+WITHDRAW_METHODS_KB = InlineKeyboardMarkup().row(
     InlineKeyboardButton('Qiwi 2% 🥝', callback_data='withdraw_qiwi'),
     # InlineKeyboardButton('BNB (BEP20) 🟢', callback_data='deposit_bnbbep20')
 )
@@ -44,3 +42,10 @@ SETTINGS_BUTTONS = [
     InlineKeyboardButton('Активации ваучеров 🔔', callback_data='notifications_vouchers_off'),
     InlineKeyboardButton('Активация ваучеров 🔕', callback_data='notifications_vouchers_on'),
 ]
+
+VOUCHERS_KB = InlineKeyboardMarkup().row(
+    InlineKeyboardButton('Мои ваучеры', callback_data='vouchers_list'),
+    InlineKeyboardButton('Создать ваучер', callback_data='vouchers_create')
+)
+
+VOUCHERS_BACK = InlineKeyboardButton('Назад', callback_data='vouchers_back')
